@@ -1,0 +1,55 @@
+{
+  "meta": {
+    "owner": "JayPat2003",
+    "repo": "github-architect-code-reviewer",
+    "pr_number": 1,
+    "pr_title": "test: add sample file for review testing",
+    "reviewed_at": "20260314_155254"
+  },
+  "passed": false,
+  "summary": "The pull request contains violations of multiple architecture principles, including missing docstrings, type hints, and hardcoded logic. Additionally, the binary file removal is acceptable but irrelevant to the architecture review.",
+  "comments": [
+    {
+      "file": "test_sample.py",
+      "line": 1,
+      "severity": "error",
+      "message": "Function 'add' is missing a docstring.",
+      "suggestion": "Add a docstring to describe the purpose and usage of the 'add' function."
+    },
+    {
+      "file": "test_sample.py",
+      "line": 1,
+      "severity": "error",
+      "message": "Function 'add' is missing type hints for its parameters and return value.",
+      "suggestion": "Add type hints to the 'add' function, e.g., 'def add(a: int, b: int) -> int:'."
+    },
+    {
+      "file": "test_sample.py",
+      "line": 4,
+      "severity": "warning",
+      "message": "Hardcoded logic for testing is present in the global scope.",
+      "suggestion": "Move testing logic into a dedicated test function or script to adhere to the single responsibility principle."
+    },
+    {
+      "file": "test_sample.py",
+      "line": null,
+      "severity": "info",
+      "message": "No error handling is implemented for potential issues in the 'add' function.",
+      "suggestion": "Consider adding error handling for edge cases, such as invalid input types, if applicable."
+    }
+  ],
+  "files_reviewed": [
+    {
+      "filename": ".DS_Store",
+      "status": "removed",
+      "additions": 0,
+      "deletions": 0
+    },
+    {
+      "filename": "test_sample.py",
+      "status": "added",
+      "additions": 5,
+      "deletions": 0
+    }
+  ]
+}

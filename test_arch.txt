@@ -1,0 +1,6 @@
+Architecture Principles:
+1. All functions must have docstrings.
+2. No hardcoded credentials or secrets in code.
+3. All files must follow single responsibility principle.
+4. Error handling must be present in all API calls.
+5. All modules must have type hints.

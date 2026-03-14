@@ -89,9 +89,9 @@ def review(owner: str, repo: str, pr_number: int, doc_path: str, output_dir: str
 
     # Lazy imports keep CLI startup fast (heavy deps load only when 'review' runs)
     from src.github_client import fetch_pull_request
-    from src.doc_loader    import load_document
-    from src.reviewer      import run_review
-    from src.reporter      import save_report
+    from src.doc_loader import load_document
+    from src.reviewer import run_review
+    from src.reporter import save_report
 
     # ── 2. Fetch PR ───────────────────────────────────────────────────────────
     with console.status("Fetching pull request…"):

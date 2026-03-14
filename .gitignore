@@ -10,8 +10,8 @@ venv/
 dist/
 *.egg-info/
 
-# Reports output
-reports/
+# # Reports output
+# reports/
 
 # OS
 .DS_Store
