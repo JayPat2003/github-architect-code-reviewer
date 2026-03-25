@@ -2,15 +2,15 @@
 reviewer.py — GitHub Copilot API integration for code review.
 
 Purpose:
-    Builds a structured prompt from the PR diff and architecture document,
-    sends it to the GitHub Copilot chat completions API via the openai SDK,
-    parses the JSON response into ReviewComment objects, and returns a
-    ReviewResult.
+    Builds a structured prompt from the PR diff and one or more compliance /
+    architecture documents, sends it to the GitHub Copilot chat completions
+    API via the openai SDK, parses the JSON response into ReviewComment
+    objects, and returns a ReviewResult.
 
 How it fits in the pipeline:
-    cli.py  ──calls──>  run_review(pr, arch_doc)  ──returns──>  ReviewResult
-                                                                      │
-                                                               reporter.py uses it
+    cli.py  ──calls──>  run_review(pr, docs)  ──returns──>  ReviewResult
+                                                                  │
+                                                           reporter.py uses it
 
 Environment variables required:
     GITHUB_TOKEN : Used as the Bearer token for Copilot API auth.
@@ -27,18 +27,18 @@ from src.types import ArchitectureDoc, PullRequest, ReviewComment, ReviewResult
 
 # ── Prompt builder ────────────────────────────────────────────────────────────
 
-def _build_prompt(pr: PullRequest, arch_doc: ArchitectureDoc) -> str:
+def _build_prompt(pr: PullRequest, docs: List[ArchitectureDoc]) -> str:
     """
     Construct the user message sent to the Copilot model.
 
     Includes:
         - PR title and description
-        - Architecture document content
+        - All compliance / architecture document contents (clearly labelled)
         - Unified diffs of every changed file
 
     Args:
-        pr      : Fetched PullRequest object.
-        arch_doc: Loaded ArchitectureDoc object.
+        pr  : Fetched PullRequest object.
+        docs: One or more loaded ArchitectureDoc objects.
 
     Returns:
         A single formatted string ready to send as the user message.
@@ -53,10 +53,19 @@ def _build_prompt(pr: PullRequest, arch_doc: ArchitectureDoc) -> str:
 
     diffs = "\n\n".join(diff_sections)
 
-    return f"""You are a senior software architect reviewing a Pull Request for compliance with the project's architecture principles.
+    # Build a clearly labelled section for every compliance document
+    doc_sections = []
+    for i, doc in enumerate(docs, start=1):
+        doc_sections.append(
+            f"### Compliance Document {i}: {doc.source} [{doc.doc_type}]\n"
+            f"{doc.content}"
+        )
+    docs_block = "\n\n".join(doc_sections)
 
-## Architecture Document
-{arch_doc.content}
+    return f"""You are a senior software architect reviewing a Pull Request for compliance with the project's architecture principles and company policies.
+
+## Compliance & Architecture Documents
+{docs_block}
 
 ## Pull Request
 **Title:** {pr.title}
@@ -66,7 +75,7 @@ def _build_prompt(pr: PullRequest, arch_doc: ArchitectureDoc) -> str:
 {diffs}
 
 ## Your Task
-Review every changed file against the architecture document.
+Review every changed file against ALL of the compliance and architecture documents listed above.
 Return a JSON object with this exact shape:
 {{
   "summary": "<one paragraph overall assessment>",
@@ -87,7 +96,7 @@ Return ONLY the JSON object — no markdown fences, no extra text."""
 
 # ── Response parser ───────────────────────────────────────────────────────────
 
-def _parse_response(raw: str, pr: PullRequest) -> ReviewResult:
+def _parse_response(raw: str, pr: PullRequest, docs: List[ArchitectureDoc]) -> ReviewResult:
     """
     Parse the raw JSON string returned by the Copilot model.
 
@@ -95,8 +104,9 @@ def _parse_response(raw: str, pr: PullRequest) -> ReviewResult:
     so the pipeline never crashes due to a malformed LLM response.
 
     Args:
-        raw: Raw string content from the model's message.
-        pr : The original PullRequest (attached to the result).
+        raw : Raw string content from the model's message.
+        pr  : The original PullRequest (attached to the result).
+        docs: The compliance documents used in this review.
 
     Returns:
         A fully-populated ReviewResult.
@@ -118,6 +128,7 @@ def _parse_response(raw: str, pr: PullRequest) -> ReviewResult:
             comments=comments,
             summary=data.get("summary", ""),
             passed=data.get("passed", True),
+            compliance_docs=docs,
         )
     except (json.JSONDecodeError, KeyError) as exc:
         # Graceful fallback — surface the raw response as an error comment
@@ -134,23 +145,29 @@ def _parse_response(raw: str, pr: PullRequest) -> ReviewResult:
             ],
             summary="Review could not be parsed.",
             passed=False,
+            compliance_docs=docs,
         )
 
 
 # ── Public entry point ────────────────────────────────────────────────────────
 
-def run_review(pr: PullRequest, arch_doc: ArchitectureDoc) -> ReviewResult:
+def run_review(pr: PullRequest, docs: List[ArchitectureDoc]) -> ReviewResult:
     """
-    Orchestrate the full Copilot review for one PR.
+    Orchestrate the full Copilot review for one PR against one or more
+    compliance / architecture documents.
 
     Uses GitHub Models API (models.inference.ai.azure.com) which accepts
     a GitHub PAT directly — no token exchange needed.
 
     Steps:
         1. Initialise the OpenAI client pointed at GitHub Models API.
-        2. Build the prompt from the PR diff and architecture document.
+        2. Build the prompt from the PR diff and all compliance documents.
         3. Send a chat completion request to gpt-4o.
         4. Parse and return the structured ReviewResult.
+
+    Args:
+        pr  : The PullRequest to review.
+        docs: One or more ArchitectureDoc objects to check compliance against.
     """
     # Explicitly remove any OPENAI_BASE_URL or OPENAI_API_KEY that could
     # redirect the client to the internal Copilot endpoint
@@ -164,7 +181,7 @@ def run_review(pr: PullRequest, arch_doc: ArchitectureDoc) -> ReviewResult:
     )
 
     # 2. Build prompt
-    prompt = _build_prompt(pr, arch_doc)
+    prompt = _build_prompt(pr, docs)
 
     # 3. Call the API
     response = client.chat.completions.create(
@@ -174,7 +191,8 @@ def run_review(pr: PullRequest, arch_doc: ArchitectureDoc) -> ReviewResult:
                 "role": "system",
                 "content": (
                     "You are an expert software architect. "
-                    "You review code changes for compliance with architecture principles. "
+                    "You review code changes for compliance with architecture principles "
+                    "and company policies. "
                     "Always respond with valid JSON only."
                 ),
             },
@@ -187,4 +205,4 @@ def run_review(pr: PullRequest, arch_doc: ArchitectureDoc) -> ReviewResult:
     raw = response.choices[0].message.content or ""
 
     # 4. Parse and return
-    return _parse_response(raw, pr)
+    return _parse_response(raw, pr, docs)
