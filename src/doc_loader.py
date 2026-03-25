@@ -2,20 +2,22 @@
 doc_loader.py — Architecture document loader.
 
 Purpose:
-    Accepts a file path or URL pointing to an architecture document,
-    extracts its plain-text content, and returns an ArchitectureDoc object.
-    Supports three input types:
+    Accepts one or more file paths or URLs pointing to architecture /
+    compliance documents, extracts their plain-text content, and returns
+    the results as ArchitectureDoc objects.
+    Supports three input types per source:
         - 'pdf'  : Local PDF file  (parsed via pdfminer.six)
         - 'url'  : HTTPS web page  (scraped via requests + BeautifulSoup)
-        - 'text' : Plain .txt file (read directly)
+        - 'text' : Plain .txt / .md file (read directly)
 
 How it fits in the pipeline:
-    cli.py  ──calls──>  load_document()  ──returns──>  ArchitectureDoc
+    cli.py  ──calls──>  load_documents()  ──returns──>  List[ArchitectureDoc]
 """
 
 import re
 from io import StringIO
 from pathlib import Path
+from typing import List
 
 import requests
 from bs4 import BeautifulSoup
@@ -46,7 +48,7 @@ def _load_url(url: str) -> str:
 
 
 def _load_text(path: str) -> str:
-    """Read a plain .txt file directly."""
+    """Read a plain text or markdown file directly."""
     return Path(path).read_text(encoding="utf-8").strip()
 
 
@@ -60,7 +62,7 @@ def load_document(source: str) -> ArchitectureDoc:
         3. Anything else                        → plain text loader.
 
     Args:
-        source: File path (PDF or .txt) or HTTPS URL.
+        source: File path (PDF, .txt, .md) or HTTPS URL.
 
     Returns:
         ArchitectureDoc with source, extracted content, and doc_type set.
@@ -84,3 +86,28 @@ def load_document(source: str) -> ArchitectureDoc:
         doc_type = "text"
 
     return ArchitectureDoc(source=source, content=content, doc_type=doc_type)
+
+
+def load_documents(sources: List[str]) -> List[ArchitectureDoc]:
+    """
+    Load one or more compliance / architecture documents.
+
+    Each source is processed independently via :func:`load_document`, so
+    any mix of PDFs, URLs, and plain-text files is valid.
+
+    Args:
+        sources: Non-empty list of file paths or URLs.
+
+    Returns:
+        List of ArchitectureDoc objects in the same order as *sources*.
+
+    Raises:
+        ValueError: If *sources* is empty.
+        Any exception raised by individual document loaders is propagated
+        to the caller so that a single bad source does not silently produce
+        an empty document set.
+    """
+    if not sources:
+        raise ValueError("At least one compliance document source must be provided.")
+    return [load_document(s) for s in sources]
+

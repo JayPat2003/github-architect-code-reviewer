@@ -14,22 +14,31 @@ How to run:
     # 1. Create a .env file with your token:
     #       GITHUB_TOKEN=ghp_...
     #
-    # 2. Basic usage:
+    # 2. Single compliance document:
     #       python -m src.cli review \
     #           --owner  <github-owner> \
     #           --repo   <repo-name>   \
     #           --pr     <pr-number>   \
     #           --doc    path/to/architecture.pdf
     #
-    # 3. Override the output directory:
+    # 3. Multiple compliance documents (PDFs, URLs, text files):
+    #       python -m src.cli review \
+    #           --owner  <github-owner> \
+    #           --repo   <repo-name>   \
+    #           --pr     <pr-number>   \
+    #           --doc    path/to/architecture.pdf \
+    #           --doc    https://your-intranet.com/security-policy \
+    #           --doc    docs/company-guidelines.md
+    #
+    # 4. Override the output directory:
     #       python -m src.cli review ... --output ./my-reports
     #
-    # 4. Show help:
+    # 5. Show help:
     #       python -m src.cli --help
     #       python -m src.cli review --help
 
 Pipeline triggered by this file:
-    fetch_pull_request()  →  load_document()  →  run_review()  →  save_report()
+    fetch_pull_request()  →  load_documents()  →  run_review()  →  save_report()
 """
 
 import os
@@ -46,7 +55,7 @@ console = Console()
 
 
 @click.group()
-@click.version_option("1.0.0")
+@click.version_option("1.1.0")
 def main() -> None:
     """AI-powered code review against architecture principles using GitHub Copilot."""
 
@@ -55,19 +64,24 @@ def main() -> None:
 @click.option("--owner",     required=True,                                      help="GitHub repository owner")
 @click.option("--repo",      required=True,                                      help="GitHub repository name")
 @click.option("--pr",        "pr_number", required=True, type=int,               help="Pull request number")
-@click.option("--doc",       "doc_path",  required=True,                         help="Path or URL to the architecture document (PDF, URL, or text file)")
+@click.option("--doc",       "doc_paths", required=True, multiple=True,
+              help=(
+                  "Path or URL to a compliance / architecture document "
+                  "(PDF, URL, or text file). "
+                  "Repeat this option to supply multiple documents."
+              ))
 @click.option("--output",    "output_dir",
               default=os.getenv("REPORT_OUTPUT_DIR", "./reports"),
               show_default=True,                                                  help="Directory for the generated report")
-def review(owner: str, repo: str, pr_number: int, doc_path: str, output_dir: str) -> None:
+def review(owner: str, repo: str, pr_number: int, doc_paths: tuple, output_dir: str) -> None:
     """
-    Review a pull request against an architecture document.
+    Review a pull request against one or more compliance documents.
 
     Steps performed:
         1. Validate that GITHUB_TOKEN is present in the environment.
         2. Fetch the PR diff from GitHub via github_client.py.
-        3. Load and parse the architecture document via doc_loader.py.
-        4. Send the diff + document to the Copilot API via reviewer.py.
+        3. Load and parse every compliance document via doc_loader.py.
+        4. Send the diff + all documents to the Copilot API via reviewer.py.
         5. Persist the structured report to disk via reporter.py.
         6. Exit 0 if no errors were found, exit 1 otherwise (CI-friendly).
 
@@ -75,7 +89,8 @@ def review(owner: str, repo: str, pr_number: int, doc_path: str, output_dir: str
         owner      : GitHub org or user who owns the repository.
         repo       : Repository name.
         pr_number  : PR number to review (--pr flag).
-        doc_path   : Local file path or HTTPS URL of the architecture doc.
+        doc_paths  : One or more local file paths or HTTPS URLs of compliance
+                     documents. Supply --doc multiple times for multiple sources.
         output_dir : Directory where the report file will be written.
     """
     # ── 1. Guard: token must exist before any network call ────────────────────
@@ -85,11 +100,12 @@ def review(owner: str, repo: str, pr_number: int, doc_path: str, output_dir: str
         sys.exit(1)
 
     console.print(f"[bold cyan]Reviewing PR #{pr_number}[/] in [green]{owner}/{repo}[/]")
-    console.print(f"Architecture doc: [yellow]{doc_path}[/]")
+    for i, doc in enumerate(doc_paths, start=1):
+        console.print(f"Compliance doc {i}: [yellow]{doc}[/]")
 
     # Lazy imports keep CLI startup fast (heavy deps load only when 'review' runs)
     from src.github_client import fetch_pull_request
-    from src.doc_loader import load_document
+    from src.doc_loader import load_documents
     from src.reviewer import run_review
     from src.reporter import save_report
 
@@ -97,13 +113,13 @@ def review(owner: str, repo: str, pr_number: int, doc_path: str, output_dir: str
     with console.status("Fetching pull request…"):
         pr = fetch_pull_request(owner, repo, pr_number, github_token)
 
-    # ── 3. Load architecture document ─────────────────────────────────────────
-    with console.status("Loading architecture document…"):
-        arch_doc = load_document(doc_path)
+    # ── 3. Load compliance documents ──────────────────────────────────────────
+    with console.status(f"Loading {len(doc_paths)} compliance document(s)…"):
+        docs = load_documents(list(doc_paths))
 
     # ── 4. Run Copilot review ─────────────────────────────────────────────────
     with console.status("Running Copilot review…"):
-        result = run_review(pr, arch_doc)
+        result = run_review(pr, docs)
 
     # ── 5. Save report ────────────────────────────────────────────────────────
     Path(output_dir).mkdir(parents=True, exist_ok=True)

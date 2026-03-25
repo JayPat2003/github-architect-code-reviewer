@@ -115,12 +115,14 @@ class ReviewResult:
     """
     Complete output of one review run.
     Fields:
-        pr      : The PullRequest reviewed.
-        comments: All ReviewComments raised.
-        summary : High-level summary paragraph.
-        passed  : False if any 'error' severity comment exists.
+        pr           : The PullRequest reviewed.
+        comments     : All ReviewComments raised.
+        summary      : High-level summary paragraph.
+        passed       : False if any 'error' severity comment exists.
+        compliance_docs: Compliance documents used in this review.
     """
     pr: PullRequest
     comments: List[ReviewComment] = field(default_factory=list)
     summary: str = ""
     passed: bool = True
+    compliance_docs: List[ArchitectureDoc] = field(default_factory=list)

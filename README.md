@@ -43,8 +43,8 @@ This tool automates the architecture review step using **GitHub Copilot AI**.
 When a developer opens a Pull Request, this tool:
 
 1. **Reads** the code changes from GitHub automatically.
-2. **Reads** your organisation's architecture document (PDF, web page, or text file).
-3. **Sends both** to GitHub Copilot AI and asks it to check for violations.
+2. **Reads** one or more of your organisation's compliance documents (PDFs, web pages, or text/Markdown files).
+3. **Sends everything** to GitHub Copilot AI and asks it to check for violations across all documents.
 4. **Produces** a structured report listing every issue found, with severity levels and suggested fixes.
 
 The result is an instant, consistent, and repeatable architecture review — every single time a Pull Request is raised.
@@ -312,7 +312,7 @@ To generate a token:
 
 ## Running the Tool
 
-### Basic command
+### Basic command (single compliance document)
 
 ```bash
 python -m src.cli review \
@@ -322,7 +322,23 @@ python -m src.cli review \
   --doc    path/to/architecture.pdf
 ```
 
-### With a URL as the architecture document
+### Multiple compliance documents
+
+Repeat `--doc` for each additional document — any combination of PDFs, URLs, and text/Markdown files is supported:
+
+```bash
+python -m src.cli review \
+  --owner  your-org \
+  --repo   your-repo \
+  --pr     42 \
+  --doc    docs/architecture-standards.pdf \
+  --doc    https://your-intranet.com/security-policy \
+  --doc    docs/company-guidelines.md
+```
+
+The AI will check the PR diff against **all** supplied documents and report any violation found in any of them.
+
+### With a URL as the compliance document
 
 ```bash
 python -m src.cli review \
@@ -355,13 +371,13 @@ python -m src.cli review --help
 
 The generated JSON report contains the following sections:
 
-| Field            | Description                                              |
-|------------------|----------------------------------------------------------|
-| `meta`           | PR details: owner, repo, number, title, and review date |
-| `passed`         | `true` if no errors were found, `false` otherwise        |
-| `summary`        | A paragraph written by the AI summarising the review     |
-| `comments`       | A list of specific issues found (see below)              |
-| `files_reviewed` | Every file that was part of the Pull Request             |
+| Field              | Description                                                         |
+|--------------------|---------------------------------------------------------------------|
+| `meta`             | PR details: owner, repo, number, title, review date, and the list of compliance documents used |
+| `passed`           | `true` if no errors were found, `false` otherwise                   |
+| `summary`          | A paragraph written by the AI summarising the review                |
+| `comments`         | A list of specific issues found (see below)                         |
+| `files_reviewed`   | Every file that was part of the Pull Request                        |
 
 ### Comment severity levels
 
@@ -380,7 +396,11 @@ The generated JSON report contains the following sections:
     "repo": "payment-service",
     "pr_number": 42,
     "pr_title": "Add Stripe payment integration",
-    "reviewed_at": "20240615_143022"
+    "reviewed_at": "20240615_143022",
+    "compliance_docs": [
+      { "source": "docs/architecture-standards.pdf", "doc_type": "pdf" },
+      { "source": "https://your-intranet.com/security-policy", "doc_type": "url" }
+    ]
   },
   "passed": false,
   "summary": "The PR introduces a payment module but contains a hardcoded API key in config.py, which directly violates the organisation's secrets management policy.",
@@ -439,9 +459,11 @@ jobs:
             --owner  ${{ github.repository_owner }} \
             --repo   ${{ github.event.repository.name }} \
             --pr     ${{ github.event.pull_request.number }} \
-            --doc    docs/architecture-standards.pdf
+            --doc    docs/architecture-standards.pdf \
+            --doc    docs/security-policy.md \
+            --doc    https://your-intranet.com/company-guidelines
 ```
 
-When this workflow is added to a repository, **every Pull Request will be automatically reviewed** against the architecture document. If violations are found, the check will fail and the merge will be blocked until the issues are resolved.
+When this workflow is added to a repository, **every Pull Request will be automatically reviewed** against all configured compliance documents. If violations are found, the check will fail and the merge will be blocked until the issues are resolved.
 
 ---

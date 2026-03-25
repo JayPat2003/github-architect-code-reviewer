@@ -58,6 +58,10 @@ def save_report(result: ReviewResult, output_dir: str) -> str:
             "pr_number": pr.number,
             "pr_title":  pr.title,
             "reviewed_at": timestamp,
+            "compliance_docs": [
+                {"source": doc.source, "doc_type": doc.doc_type}
+                for doc in result.compliance_docs
+            ],
         },
         "passed":   result.passed,
         "summary":  result.summary,
