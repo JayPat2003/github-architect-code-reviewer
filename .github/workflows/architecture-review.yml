@@ -1,0 +1,41 @@
+name: Architecture Review
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Validate agent (unit tests)
+        run: python -m pytest tests/test_agent.py -v
+
+      - name: Run Agentic Architecture Review
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python -m src.cli review \
+            --owner  ${{ github.repository_owner }} \
+            --repo   ${{ github.event.repository.name }} \
+            --pr     ${{ github.event.pull_request.number }} \
+            --doc    docs/architecture-standards.pdf \
+            --post-comments
+
+      - name: Upload Review Report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: architecture-review-report
+          path: reports/
+          retention-days: 30

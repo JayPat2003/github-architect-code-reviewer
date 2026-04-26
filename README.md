@@ -1,447 +1,262 @@
 # 🏗️ GitHub Architect Code Reviewer
 
-> An AI-powered tool that automatically reviews Pull Requests against your organisation's architecture principles — ensuring every code change aligns with your standards before it reaches production.
+> Agentic AI code review for Pull Requests, aligned to your architecture standards, with deterministic safeguards for CI.
 
 ---
 
 ## 📋 Table of Contents
 
-1. [The Problem](#the-problem)
-2. [The Solution](#the-solution)
-3. [How It Works — High Level](#how-it-works--high-level)
-4. [Detailed Pipeline Walkthrough](#detailed-pipeline-walkthrough)
+1. [What This Tool Solves](#what-this-tool-solves)
+2. [What It Does](#what-it-does)
+3. [Agentic Safeguards (Latest)](#agentic-safeguards-latest)
+4. [How It Works](#how-it-works)
 5. [Project Structure](#project-structure)
-6. [Setup & Installation](#setup--installation)
-7. [Running the Tool](#running-the-tool)
-8. [Understanding the Report](#understanding-the-report)
-9. [CI/CD Integration](#cicd-integration)
+6. [Setup](#setup)
+7. [Usage](#usage)
+8. [Output Report Format](#output-report-format)
+9. [Testing](#testing)
+10. [CI/CD Integration](#cicd-integration)
 
 ---
 
-## The Problem
+## What This Tool Solves
 
-In large organisations, software teams are expected to follow strict architecture standards. These standards are typically written in documents that describe rules such as:
+Architecture docs are usually long, and PR reviewers are time-constrained. That creates risk:
 
-- "All external API calls must include error handling."
-- "No credentials or secrets may be hardcoded in source code."
-- "Services must communicate only through approved interfaces."
-- "Every module must remain loosely coupled from others."
+- Important rules can be missed.
+- Manual reviews can be inconsistent.
+- Violations are found late in the cycle.
 
-**The challenge** is that these documents are long, and developers — under deadline pressure — can unintentionally miss a rule. Today, the only way to catch these violations is through a manual architecture review, which:
-
-- Requires a senior architect's time on every Pull Request.
-- Slows down the delivery pipeline.
-- Is inconsistent — different reviewers may focus on different rules.
-- Often happens too late, after the code is already written.
+This project automates architecture-aware PR checks so each PR is reviewed with the same process and quality bar.
 
 ---
 
-## The Solution
+## What It Does
 
-This tool automates the architecture review step using **GitHub Copilot AI**.
+For each PR, the tool:
 
-When a developer opens a Pull Request, this tool:
-
-1. **Reads** the code changes from GitHub automatically.
-2. **Reads** your organisation's architecture document (PDF, web page, or text file).
-3. **Sends both** to GitHub Copilot AI and asks it to check for violations.
-4. **Produces** a structured report listing every issue found, with severity levels and suggested fixes.
-
-The result is an instant, consistent, and repeatable architecture review — every single time a Pull Request is raised.
+1. Fetches changed files and patches from GitHub.
+2. Loads architecture guidance from `PDF`, `URL`, or text file.
+3. Runs an agentic tool-calling review loop with `gpt-4o`.
+4. Produces a structured JSON report.
+5. Optionally posts review comments back to the PR.
 
 ---
 
-## How It Works — High Level
+## Agentic Safeguards (Latest)
 
-```
-  Developer opens a Pull Request on GitHub
-              │
-              ▼
-  ┌─────────────────────────────┐
-  │   Tool is triggered (CLI)   │
-  └────────────┬────────────────┘
-               │
-       ┌───────┴────────┐
-       ▼                ▼
-  ┌─────────┐     ┌──────────────────────┐
-  │  GitHub │     │  Architecture        │
-  │   API   │     │  Document            │
-  │         │     │  (PDF / URL / Text)  │
-  │ PR Diff │     │                      │
-  └────┬────┘     └──────────┬───────────┘
-       │                     │
-       └──────────┬──────────┘
-                  │
-                  ▼
-       ┌──────────────────────┐
-       │   GitHub Copilot AI  │
-       │                      │
-       │  "Does this code     │
-       │   follow the rules   │
-       │   in the document?"  │
-       └──────────┬───────────┘
-                  │
-                  ▼
-       ┌──────────────────────┐
-       │   Review Report      │
-       │   (JSON File)        │
-       │                      │
-       │  ✅ PASSED  or       │
-       │  ❌ FAILED           │
-       │                      │
-       │  + List of comments  │
-       │    with severity,    │
-       │    file, and fix     │
-       └──────────────────────┘
-```
+The latest version includes hardening to make the reviewer more reliable and truly CI-safe:
+
+- **Mandatory file coverage**: review fails if the agent does not inspect every changed file with `fetch_file_content`.
+- **Verdict consistency enforcement**: if any `error` violation is recorded, final verdict is automatically forced to `passed=false`.
+- **Chunked architecture retrieval**: architecture doc is chunked and retrieved via relevance scoring, avoiding reliance on only the first few thousand characters.
+- **Richer file-context tool output**: `fetch_file_content` now returns patch plus metadata (`status`, `additions`, `deletions`, `patch_line_count`, `has_patch`).
+- **Safer local/test execution**: reviewer supports injected client/token and no longer mutates global `OPENAI_*` environment values.
 
 ---
 
-## Detailed Pipeline Walkthrough
+## How It Works
 
-The tool is made up of five modules that run in sequence. Below is a walkthrough of each stage.
-
----
-
-### Stage 1 — Fetch the Pull Request (`github_client.py`)
-
-```
-  CLI receives:
-  --owner  myorg
-  --repo   my-service
-  --pr     42
-         │
-         ▼
-  Connects to GitHub API
-  using your personal access token
-         │
-         ▼
-  Downloads:
-  ┌──────────────────────────────────────────┐
-  │  PR Title      : "Add payment service"   │
-  │  PR Description: "Implements Stripe..."  │
-  │                                          │
-  │  Changed Files:                          │
-  │  ┌──────────────────────────────────┐    │
-  │  │ src/payment.py   [modified]      │    │
-  │  │   + 45 lines added               │    │
-  │  │   - 12 lines removed             │    │
-  │  │   diff: @@ -10,3 +10,5 @@...    │    │
-  │  ├──────────────────────────────────┤    │
-  │  │ src/config.py    [modified]      │    │
-  │  │   + 3 lines added                │    │
-  │  └──────────────────────────────────┘    │
-  └──────────────────────────────────────────┘
+```text
+PR Opened
+   ↓
+CLI command (src/cli.py)
+   ↓
+Fetch PR data (src/github_client.py)
+   ↓
+Load architecture document (src/doc_loader.py)
+   ↓
+Agentic review loop (src/reviewer.py)
+   - fetch_file_content
+   - search_architecture_doc
+   - flag_violation
+   - finish_review
+   ↓
+Deterministic post-checks
+   - all files reviewed?
+   - any error => force fail
+   ↓
+Save JSON report (src/reporter.py)
+   ↓
+Optional: post PR review comments (src/github_commenter.py)
 ```
 
-A **diff** is a standard format showing exactly what lines of code were added (marked with `+`) and removed (marked with `-`) in a file.
+### Core Modules
 
----
-
-### Stage 2 — Load the Architecture Document (`doc_loader.py`)
-
-```
-  --doc  path/to/architecture.pdf
-              │
-              ▼
-  ┌──────────────────────────────────┐
-  │  Detect document type:           │
-  │                                  │
-  │  Starts with https:// → Web page │
-  │  Ends with .pdf       → PDF file │
-  │  Anything else        → Text file│
-  └──────────────┬───────────────────┘
-                 │
-                 ▼
-  Extract all text content from the document
-                 │
-                 ▼
-  "All services must implement retry logic.
-   No hardcoded credentials are permitted.
-   All modules must use dependency injection..."
-```
-
-The tool supports your architecture document in whatever format it already exists in — no need to reformat it.
-
----
-
-### Stage 3 — AI Review (`reviewer.py`)
-
-This is the core of the tool. Both the code diff and the architecture document are combined into a single request sent to **GitHub Copilot AI**.
-
-```
-  ┌────────────────────────────────────────────────────────────┐
-  │                  Message sent to Copilot AI                │
-  │                                                            │
-  │  "You are a senior software architect.                     │
-  │                                                            │
-  │   Here is our Architecture Document:                       │
-  │   [full document text]                                     │
-  │                                                            │
-  │   Here is the Pull Request diff:                           │
-  │   [all changed files and their diffs]                      │
-  │                                                            │
-  │   Review the changes for compliance.                       │
-  │   Return a structured JSON report."                        │
-  └────────────────────────────┬───────────────────────────────┘
-                               │
-                               ▼
-                    GitHub Copilot AI (gpt-4o)
-                               │
-                               ▼
-  ┌────────────────────────────────────────────────────────────┐
-  │                  Structured JSON Response                  │
-  │  {                                                         │
-  │    "passed": false,                                        │
-  │    "summary": "The PR introduces a payment module         │
-  │                but hardcodes an API key in config.py,     │
-  │                violating the secrets policy.",            │
-  │    "comments": [                                           │
-  │      {                                                     │
-  │        "file": "src/config.py",                           │
-  │        "line": 14,                                        │
-  │        "severity": "error",                               │
-  │        "message": "API key is hardcoded.",                │
-  │        "suggestion": "Use environment variables instead." │
-  │      }                                                     │
-  │    ]                                                       │
-  │  }                                                         │
-  └────────────────────────────────────────────────────────────┘
-```
-
----
-
-### Stage 4 — Save the Report (`reporter.py`)
-
-```
-  ReviewResult object
-          │
-          ▼
-  Serialise to a JSON file with a unique timestamped filename:
-
-  reports/
-  └── myorg__my-service__pr42__20240615_143022.json
-
-  The file contains:
-  ┌──────────────────────────────────────────┐
-  │  meta        : owner, repo, pr, date     │
-  │  passed      : true / false              │
-  │  summary     : overall AI assessment     │
-  │  comments    : list of issues found      │
-  │  files_reviewed: list of changed files   │
-  └──────────────────────────────────────────┘
-```
-
-Each run produces a new file, so a full history of all reviews is preserved.
-
----
-
-### Stage 5 — Exit Code for CI (`cli.py`)
-
-```
-  result.passed == True
-        │
-        ├── Yes → Print "PASSED", exit with code 0
-        │         (CI pipeline continues ✅)
-        │
-        └── No  → Print "FAILED", exit with code 1
-                  (CI pipeline stops ❌)
-```
-
-This means the tool can be placed inside an automated pipeline (GitHub Actions, Jenkins, etc.) and will **block a merge** if the code violates architecture rules.
+- `src/cli.py` — command entrypoint and orchestration.
+- `src/github_client.py` — GitHub API PR + files fetch.
+- `src/doc_loader.py` — architecture doc ingestion (`url` / `pdf` / `text`).
+- `src/reviewer.py` — agentic tool loop + safety enforcement.
+- `src/tools.py` — tool schemas exposed to the model.
+- `src/reporter.py` — writes JSON reports.
+- `src/github_commenter.py` — posts PR review comments.
+- `src/types.py` — shared dataclasses.
 
 ---
 
 ## Project Structure
 
-```
+```text
 copilot-code-reviewer/
-│
 ├── src/
-│   ├── cli.py            # Entry point — wires the pipeline together
-│   ├── github_client.py  # Fetches PR data from GitHub API
-│   ├── doc_loader.py     # Loads architecture document (PDF/URL/text)
-│   ├── reviewer.py       # Sends data to Copilot AI and parses response
-│   ├── reporter.py       # Saves the structured report to disk
-│   └── types.py          # Shared data models used across all modules
-│
-├── reports/              # Generated review reports are saved here
-├── .env                  # Your GitHub token (never commit this file)
-├── requirements.txt      # Python dependencies
+│   ├── cli.py
+│   ├── github_client.py
+│   ├── doc_loader.py
+│   ├── reviewer.py
+│   ├── tools.py
+│   ├── reporter.py
+│   ├── github_commenter.py
+│   └── types.py
+├── tests/
+│   └── test_agent.py
+├── reports/
+├── .github/workflows/architecture-review.yml
+├── requirements.txt
 └── README.md
 ```
 
 ---
 
-## Setup & Installation
+## Setup
 
 ### Prerequisites
 
-- Python 3.10 or higher
-- A GitHub account with access to the repository you want to review
-- A GitHub Personal Access Token (PAT)
+- Python 3.10+
+- GitHub token with repo access
 
-### Step 1 — Clone the repository
+### Install
 
 ```bash
 git clone https://github.com/your-org/copilot-code-reviewer.git
 cd copilot-code-reviewer
-```
-
-### Step 2 — Install dependencies
-
-```bash
 pip install -r requirements.txt
 ```
 
-### Step 3 — Create your `.env` file
+### Environment
 
-Create a file named `.env` in the project root with the following content:
+Create `.env`:
 
+```bash
+GITHUB_TOKEN=ghp_your_token_here
 ```
-GITHUB_TOKEN=ghp_your_personal_access_token_here
-```
-
-To generate a token:
-1. Go to **GitHub → Settings → Developer Settings → Personal Access Tokens**
-2. Create a token with the `repo` scope (for private repositories) or `public_repo` (for public repositories)
-
-> **Important:** Never share or commit this file. It contains your credentials.
 
 ---
 
-## Running the Tool
+## Usage
 
-### Basic command
+### Basic run
 
 ```bash
 python -m src.cli review \
-  --owner  your-org \
-  --repo   your-repo \
-  --pr     42 \
-  --doc    path/to/architecture.pdf
+  --owner your-org \
+  --repo your-repo \
+  --pr 42 \
+  --doc path/to/architecture.pdf
 ```
 
-### With a URL as the architecture document
+### With URL doc
 
 ```bash
 python -m src.cli review \
-  --owner  your-org \
-  --repo   your-repo \
-  --pr     42 \
-  --doc    https://your-intranet.com/architecture-standards
+  --owner your-org \
+  --repo your-repo \
+  --pr 42 \
+  --doc https://your-docs-url/architecture
 ```
 
-### Specifying a custom output directory
+### With custom output directory
 
 ```bash
 python -m src.cli review \
-  --owner  your-org \
-  --repo   your-repo \
-  --pr     42 \
-  --doc    architecture.txt \
+  --owner your-org \
+  --repo your-repo \
+  --pr 42 \
+  --doc architecture.txt \
   --output ./review-history
 ```
 
-### Help
+### Post comments back to PR
 
 ```bash
-python -m src.cli review --help
+python -m src.cli review \
+  --owner your-org \
+  --repo your-repo \
+  --pr 42 \
+  --doc architecture.txt \
+  --post-comments
 ```
 
 ---
 
-## Understanding the Report
+## Output Report Format
 
-The generated JSON report contains the following sections:
+Each run writes `reports/review__YYYYMMDD_HHMMSS.json` with this shape:
 
-| Field            | Description                                              |
-|------------------|----------------------------------------------------------|
-| `meta`           | PR details: owner, repo, number, title, and review date |
-| `passed`         | `true` if no errors were found, `false` otherwise        |
-| `summary`        | A paragraph written by the AI summarising the review     |
-| `comments`       | A list of specific issues found (see below)              |
-| `files_reviewed` | Every file that was part of the Pull Request             |
+| Field | Description |
+|---|---|
+| `reviewed_at` | Timestamp of report generation |
+| `passed` | Final verdict (`true` / `false`) |
+| `summary` | Review summary text |
+| `comments` | Violations found |
+| `files_reviewed` | Changed file metadata list |
 
-### Comment severity levels
-
-| Severity  | Meaning                                                        |
-|-----------|----------------------------------------------------------------|
-| `error`   | A clear violation of an architecture rule. Must be fixed.      |
-| `warning` | A potential concern that should be discussed.                  |
-| `info`    | A suggestion or observation for improvement.                   |
-
-### Example report
+### Example
 
 ```json
 {
-  "meta": {
-    "owner": "myorg",
-    "repo": "payment-service",
-    "pr_number": 42,
-    "pr_title": "Add Stripe payment integration",
-    "reviewed_at": "20240615_143022"
-  },
+  "reviewed_at": "20260426_184200",
   "passed": false,
-  "summary": "The PR introduces a payment module but contains a hardcoded API key in config.py, which directly violates the organisation's secrets management policy.",
+  "summary": "2 architecture violations found. Verdict adjusted: errors were recorded.",
   "comments": [
     {
       "file": "src/config.py",
       "line": 14,
       "severity": "error",
-      "message": "The Stripe API key is hardcoded as a string literal.",
-      "suggestion": "Move this value to an environment variable and access it via os.getenv('STRIPE_API_KEY')."
+      "message": "Hardcoded secret detected.",
+      "suggestion": "Use environment variables."
     }
   ],
   "files_reviewed": [
-    { "filename": "src/config.py",   "status": "modified", "additions": 3,  "deletions": 1 },
-    { "filename": "src/payment.py",  "status": "added",    "additions": 45, "deletions": 0 }
+    { "filename": "src/config.py", "status": "modified", "additions": 3, "deletions": 1 }
   ]
 }
 ```
 
 ---
 
-## CI/CD Integration
+## Testing
 
-The tool exits with code `0` (success) or `1` (failure), making it directly compatible with any CI/CD system.
+Run all tests:
 
-### GitHub Actions example
-
-```yaml
-# .github/workflows/architecture-review.yml
-
-name: Architecture Review
-
-on:
-  pull_request:
-    branches: [main]
-
-jobs:
-  review:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-
-      - name: Run Architecture Review
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          python -m src.cli review \
-            --owner  ${{ github.repository_owner }} \
-            --repo   ${{ github.event.repository.name }} \
-            --pr     ${{ github.event.pull_request.number }} \
-            --doc    docs/architecture-standards.pdf
+```bash
+pytest -q
 ```
 
-When this workflow is added to a repository, **every Pull Request will be automatically reviewed** against the architecture document. If violations are found, the check will fail and the merge will be blocked until the issues are resolved.
+Run agent-focused tests:
+
+```bash
+python -m pytest tests/test_agent.py -v
+```
+
+Current baseline after latest improvements:
+
+- `20 passed`
+- No lints on updated agent modules
+
+---
+
+## CI/CD Integration
+
+Workflow: `.github/workflows/architecture-review.yml`
+
+It currently performs:
+
+1. Install dependencies
+2. Validate agent tests
+3. Run agentic review on PR
+4. Optionally post comments
+5. Upload generated report artifact
+
+This allows architecture compliance to become an enforceable PR gate (`exit 0/1`) in GitHub Actions.
 
 ---
